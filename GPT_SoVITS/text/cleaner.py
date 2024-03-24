@@ -22,6 +22,9 @@ def clean_text(text, language):
         phones, word2ph = language_module.g2p(norm_text)
         assert len(phones) == sum(word2ph)
         assert len(norm_text) == len(word2ph)
+    elif language == 'en':
+        phones, word2ph = language_module.g2p(norm_text)
+        assert len(phones) == sum(word2ph)
     else:
         phones = language_module.g2p(norm_text)
         word2ph = None

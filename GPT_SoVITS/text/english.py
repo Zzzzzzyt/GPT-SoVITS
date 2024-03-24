@@ -207,6 +207,13 @@ def text_normalize(text):
     return text
 
 
+from nltk import pos_tag
+from nltk.tokenize import TweetTokenizer
+word_tokenize = TweetTokenizer().tokenize
+import unicodedata
+from builtins import str as unicode
+from g2p_en.expand import normalize_numbers
+
 class en_G2p(G2p):
     def __init__(self):
         super().__init__()
@@ -227,23 +234,70 @@ class en_G2p(G2p):
     def predict(self, word):
         # 小写 oov 长度小于等于 3 直接读字母
         if (len(word) <= 3):
-            return [phone for w in word for phone in self(w)]
+            phones=[]
+            for w in word:
+                phone=self(w)
+                phones.extend(phone)
+            return phones
+            # return [phone for w in word for phone in self(w)]
 
         # 尝试分离所有格
         if re.match(r"^([a-z]+)('s)$", word):
             phone = self(word[:-2])
-            phone.extend(['Z'])
+            phone.append(['Z'])
             return phone
 
         # 尝试进行分词，应对复合词
         comps = wordsegment.segment(word.lower())
-
+        
         # 无法分词的送回去预测
         if len(comps)==1:
-            return super().predict(word)
+            phones=super().predict(word)
+            return [phones]
 
         # 可以分词的递归处理
-        return [phone for comp in comps for phone in self(comp)]
+        phones=[]
+        for comp in comps:
+            phone=self(comp)
+            phones.extend(phone)
+        return phones
+        # return [phone for comp in comps for phone in self(comp)]
+
+    def __call__(self, text):
+        # preprocessing
+        text = unicode(text)
+        text = normalize_numbers(text)
+        text = ''.join(char for char in unicodedata.normalize('NFD', text)
+                       if unicodedata.category(char) != 'Mn')  # Strip accents
+        text = text.lower()
+        text = re.sub("[^ a-z'.,?!\-]", "", text)
+        text = text.replace("i.e.", "that is")
+        text = text.replace("e.g.", "for example")
+
+        # tokenization
+        words = word_tokenize(text)
+        tokens = pos_tag(words)  # tuples of (word, tag)
+
+        # steps
+        prons = []
+        # print('tokens:',tokens)
+        for word, pos in tokens:
+            if re.search("[a-z]", word) is None:
+                pron = [[word]]
+            elif word in self.homograph2features:  # Check homograph
+                pron1, pron2, pos1 = self.homograph2features[word]
+                if pos.startswith(pos1):
+                    pron = [pron1]
+                else:
+                    pron = [pron2]
+            elif word in self.cmu:  # lookup CMU dict
+                pron = [self.cmu[word][0]]
+            else: # predict for oov
+                pron = self.predict(word)
+            prons.extend(pron)
+            prons.append([" "])
+
+        return prons[:-1]
 
 
 _g2p = en_G2p()
@@ -252,10 +306,16 @@ _g2p = en_G2p()
 def g2p(text):
     # g2p_en 整段推理，剔除不存在的arpa返回
     phone_list = _g2p(text)
-    phones = [ph if ph != "<unk>" else "UNK" for ph in phone_list if ph not in [" ", "<pad>", "UW", "</s>", "<s>"]]
 
-    return replace_phs(phones)
-
+    phones2=[]
+    word2ph2=[]
+    for phones in phone_list:
+        phones = [ph if ph != "<unk>" else "UNK" for ph in phones if ph not in [" ", "<pad>", "UW", "</s>", "<s>"]]
+        s=replace_phs(phones)
+        if len(s)>0:
+            phones2.extend(s)
+            word2ph2.append(len(s))
+    return phones2,word2ph2
 
 if __name__ == "__main__":
     # print(get_dict())
